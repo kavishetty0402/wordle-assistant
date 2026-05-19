@@ -14,7 +14,7 @@ import streamlit as st
 from wordle_solver import (
     ALL_GREEN, BLACK, GREEN, WORD_LEN, YELLOW,
     actual_information, build_pattern_matrix, best_guesses_matrix,
-    compute_entropy, entropy_from_matrix, get_pattern,
+    compute_entropy, entropy_from_matrix, filter_words, get_pattern,
     pattern_to_emoji,
 )
 
@@ -71,6 +71,23 @@ def reset_game(all_words):
     st.session_state.game_over = False
     st.session_state.solved = False
     st.session_state.attempt = 1
+
+
+def undo_last_guess(all_words):
+    if not st.session_state.history:
+        return
+    st.session_state.history.pop()
+    st.session_state.attempt -= 1
+    st.session_state.game_over = False
+    st.session_state.solved = False
+    # Re-derive possible words by replaying remaining history
+    possible = list(all_words)
+    total_info = 0.0
+    for entry in st.session_state.history:
+        possible = filter_words(possible, entry["guess"], entry["pattern"])
+        total_info += entry["actual"]
+    st.session_state.possible = possible
+    st.session_state.total_info = total_info
 
 
 def ensure_state(all_words):
@@ -140,6 +157,32 @@ def render_best_guesses_table(ranked):
     )
 
 
+def render_possible_answers(possible):
+    """Show a clear list of all remaining candidate words when the set is small."""
+    n = len(possible)
+    st.subheader(f"🎯 Possible answers ({n})")
+    st.caption(
+        "The remaining words are few enough that entropy-based ranking isn't very helpful — "
+        "any guess from this list will work. Pick whichever word you recognise!"
+    )
+    # Display as a neat grid of word chips
+    cols_per_row = 5
+    sorted_words = sorted(possible)
+    for i in range(0, n, cols_per_row):
+        cols = st.columns(cols_per_row)
+        for j, col in enumerate(cols):
+            idx = i + j
+            if idx < n:
+                col.markdown(
+                    f"<div style='background:#1a1a2e; border:1px solid #6aaa64; "
+                    f"border-radius:8px; padding:10px 6px; text-align:center; "
+                    f"font-weight:700; font-size:1.1em; letter-spacing:2px; "
+                    f"color:#6aaa64;'>{sorted_words[idx].upper()}</div>",
+                    unsafe_allow_html=True,
+                )
+    st.write("")
+
+
 # ─── Main app ─────────────────────────────────────────────────────────────────
 
 def main():
@@ -171,6 +214,10 @@ def main():
             reset_game(all_words)
             st.rerun()
 
+        if st.session_state.history and st.button("↩ Undo last guess", use_container_width=True):
+            undo_last_guess(all_words)
+            st.rerun()
+
         st.divider()
         if 0 < n_possible <= 30:
             st.subheader(f"Remaining words ({n_possible})")
@@ -181,7 +228,12 @@ def main():
     # ── Compute best guesses for the current state ────────────────────────────
     with st.spinner("Computing best guesses…"):
         ranked = top_guesses(matrix, word_to_idx, all_words, st.session_state.possible, top_n=10)
-    recommended = ranked[0][0] if ranked else ""
+    n_possible = len(st.session_state.possible)
+    if 1 < n_possible <= 10:
+        # When few candidates remain, recommend from the possible set directly
+        recommended = sorted(st.session_state.possible)[0]
+    else:
+        recommended = ranked[0][0] if ranked else ""
 
     # ── Two-column layout ─────────────────────────────────────────────────────
     left, right = st.columns([1, 1], gap="large")
@@ -190,8 +242,14 @@ def main():
         render_history()
 
     with right:
-        st.subheader("Best next guesses")
-        render_best_guesses_table(ranked)
+        n_possible = len(st.session_state.possible)
+        if 1 < n_possible <= 10:
+            render_possible_answers(st.session_state.possible)
+            with st.expander("Entropy rankings (for reference)"):
+                render_best_guesses_table(ranked)
+        else:
+            st.subheader("Best next guesses")
+            render_best_guesses_table(ranked)
 
     # ── Game-over banner ──────────────────────────────────────────────────────
     if st.session_state.game_over:
@@ -253,7 +311,11 @@ def main():
 
         if n_after == 0:
             st.error(
-                "⚠️ No words match this pattern — double-check the colours you entered."
+                "⚠️ No words match this pattern.\n\n"
+                "**Common cause with duplicate letters:** if the target has the same letter "
+                "at the same position as your guess (e.g. E at position 4 in both TARES and ENTER), "
+                "Wordle shows it as **green**, not yellow. "
+                "Use the **↩ Undo last guess** button in the sidebar to re-enter any guess with the correct colours."
             )
             st.stop()
 
