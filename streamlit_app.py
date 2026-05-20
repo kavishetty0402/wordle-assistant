@@ -435,10 +435,11 @@ def main():
             "🔒 Hard mode",
             value=st.session_state.hard_mode,
             help=(
-                "In hard mode, every guess must be from the official answer list "
-                "and must satisfy all revealed constraints (green letters stay, "
+                "In hard mode, the first guess can be any word (all 12,900+). "
+                "From guess 2 onward, only official answer-list words are shown, "
+                "filtered by revealed constraints (green letters stay, "
                 "yellow letters must be reused, black letters excluded). "
-                "Words are ranked by entropy with common words preferred as tiebreakers."
+                "Ranked by entropy with more common words preferred as tiebreakers."
             ),
         )
         if hard_mode != st.session_state.hard_mode:
@@ -446,9 +447,12 @@ def main():
             st.rerun()
 
         if st.session_state.hard_mode:
-            # Show how many answer words are valid under constraints
-            valid_hm = hard_mode_filter(answers, st.session_state.history)
-            st.caption(f"🔒 {len(valid_hm):,} answer words pass hard mode constraints")
+            if st.session_state.history:
+                # Show how many answer words are valid under constraints
+                valid_hm = hard_mode_filter(answers, st.session_state.history)
+                st.caption(f"🔒 {len(valid_hm):,} answer words pass constraints")
+            else:
+                st.caption("🔒 First guess is unrestricted — constraints apply from guess 2")
 
         st.divider()
 
@@ -474,13 +478,10 @@ def main():
     with st.spinner("Computing best guesses…"):
         ranked = top_guesses(matrix, word_to_idx, all_words, st.session_state.possible, top_n=10)
 
-        if is_hard:
+        # Hard mode only kicks in from guess 2+, once there's feedback to constrain against.
+        # The first guess is unrestricted — any of the 12,900+ words.
+        if is_hard and st.session_state.history:
             valid_hm_guesses = hard_mode_filter(answers, st.session_state.history)
-            # Also intersect with possible answers (can't guess a word that's been eliminated)
-            # Actually no — in Wordle hard mode you CAN guess any valid word, it just must
-            # satisfy the constraints. The answer might not be in your guess.
-            # But the user said "you HAVE to use words strictly from the answer list",
-            # and the constraints are about letter reuse, not about the word being possible.
             ranked_hard = top_guesses_hard_mode(
                 matrix, word_to_idx, all_words, st.session_state.possible,
                 valid_hm_guesses, commonality, top_n=15,
@@ -489,7 +490,7 @@ def main():
     # Determine recommended word
     n_possible = len(st.session_state.possible)
     if is_hard and ranked_hard:
-        # In hard mode, recommend the top hard-mode-compatible word
+        # In hard mode (guess 2+), recommend the top hard-mode-compatible word
         recommended = ranked_hard[0][0]
     elif 1 < n_possible <= 10:
         # When few candidates remain, recommend from the possible set directly
